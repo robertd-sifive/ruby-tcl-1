@@ -19,15 +19,15 @@ static void rb_tcl_interp_destroy(tcl_interp_struct *tcl_interp) {
 static VALUE rb_tcl_interp_send_begin(VALUE args) {
   VALUE obj = rb_ary_entry(args, 0);
   VALUE interp_receive_args = rb_ary_entry(args, 1);
-  
+
   VALUE result = rb_funcall2(obj, rb_intern("interp_receive"), RARRAY_LEN(interp_receive_args), RARRAY_PTR(interp_receive_args));
-  
+
   tcl_interp_struct *tcl_interp;
   Data_Get_Struct(obj, tcl_interp_struct, tcl_interp);
 
   char *tcl_result = strdup(RSTRING_PTR(rb_value_to_s(result)));
   Tcl_SetResult(tcl_interp->interp, tcl_result, (Tcl_FreeProc *)free);
-  
+
   return Qtrue;
 }
 
@@ -35,7 +35,7 @@ static VALUE rb_tcl_interp_send_rescue(VALUE args, VALUE error_info) {
   VALUE obj = rb_ary_entry(args, 0);
   tcl_interp_struct *tcl_interp;
   Data_Get_Struct(obj, tcl_interp_struct, tcl_interp);
-  
+
   char *tcl_result = strdup(RSTRING_PTR(rb_value_to_s(error_info)));
   Tcl_SetResult(tcl_interp->interp, tcl_result, (Tcl_FreeProc *)free);
 
@@ -49,17 +49,17 @@ static VALUE rb_tcl_interp_send_rescue(VALUE args, VALUE error_info) {
 static int rb_tcl_interp_send(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[]) {
   VALUE interp_receive_args = rb_ary_new2(objc - 1);
   int i;
-  
+
   for (i = 1; i < objc; i++) {
     int element_length;
     const char *element;
-    
+
     element = Tcl_GetStringFromObj(objv[i], &element_length);
     rb_ary_push(interp_receive_args, rb_tainted_str_new2(element));
   }
-  
+
   VALUE args = rb_ary_new3(2, (VALUE) clientData, interp_receive_args);
-  
+
   if (rb_rescue2(rb_tcl_interp_send_begin, args, rb_tcl_interp_send_rescue, args, rb_eException) == Qtrue) {
     return TCL_OK;
   } else {
@@ -70,14 +70,14 @@ static int rb_tcl_interp_send(ClientData clientData, Tcl_Interp *interp, int obj
 static VALUE rb_tcl_interp_allocate(VALUE klass) {
   tcl_interp_struct *tcl_interp;
   VALUE obj = Data_Make_Struct(klass, tcl_interp_struct, NULL, rb_tcl_interp_destroy, tcl_interp);
-  
+
   tcl_interp->interp = Tcl_CreateInterp();
   tcl_interp->exit_exception = Qnil;
   Tcl_Init(tcl_interp->interp);
   Tcl_Preserve(tcl_interp->interp);
-  
+
   Tcl_CreateObjCommand(tcl_interp->interp, "interp_send", (Tcl_ObjCmdProc *)rb_tcl_interp_send, (ClientData) obj, (Tcl_CmdDeleteProc *)NULL);
-  
+
   return obj;
 }
 
@@ -86,7 +86,7 @@ static VALUE rb_tcl_safe_interp_allocate(VALUE klass) {
 
   tcl_interp_struct *tcl_interp;
   Data_Get_Struct(obj, tcl_interp_struct, tcl_interp);
-  
+
   Tcl_MakeSafe(tcl_interp->interp);
 
   return obj;
@@ -120,24 +120,24 @@ static VALUE rb_tcl_interp_eval(VALUE self, VALUE script) {
 #endif
 
   int result = Tcl_Eval(tcl_interp->interp, RSTRING_PTR(rb_value_to_s(script)));
-  
+
   VALUE error_class = rb_const_get(rb_const_get(rb_cObject, rb_intern("Tcl")), rb_intern("Error"));
 
 #ifdef TCL_LIMIT_TIME
   if (timeout > 0) {
     if (Tcl_LimitTypeExceeded(tcl_interp->interp, TCL_LIMIT_TIME))
       error_class = rb_const_get(rb_const_get(rb_cObject, rb_intern("Tcl")), rb_intern("Timeout"));
-      
+
     Tcl_LimitTypeReset(tcl_interp->interp, TCL_LIMIT_TIME);
   }
 #endif
-  
+
   switch (result) {
     case TCL_OK:
-      return rb_tainted_str_new2(tcl_interp->interp->result);
+      return rb_tainted_str_new2(Tcl_GetStringResult(tcl_interp->interp));
     case TCL_ERROR:
       if (NIL_P(tcl_interp->exit_exception)) {
-        rb_raise(error_class, "%s", tcl_interp->interp->result);
+        rb_raise(error_class, "%s", Tcl_GetStringResult(tcl_interp->interp));
       } else {
         rb_exit(NUM2INT(rb_iv_get(tcl_interp->exit_exception, "status")));
       }
@@ -149,32 +149,32 @@ static VALUE rb_tcl_interp_eval(VALUE self, VALUE script) {
 static VALUE rb_tcl_interp_list_to_array(VALUE self, VALUE list) {
   tcl_interp_struct *tcl_interp;
   Data_Get_Struct(self, tcl_interp_struct, tcl_interp);
-  
+
   Tcl_Obj *string = Tcl_NewStringObj(RSTRING_PTR(rb_value_to_s(list)), -1);
   Tcl_IncrRefCount(string);
 
   int list_length, i;
   Tcl_Obj **elements;
-  
+
   if (Tcl_ListObjGetElements(tcl_interp->interp, string, &list_length, &elements) != TCL_OK) {
     Tcl_DecrRefCount(string);
     return Qnil;
   }
-  
+
   for (i = 0; i < list_length; i++)
     Tcl_IncrRefCount(elements[i]);
-  
+
   VALUE result = rb_ary_new2(list_length);
-  
+
   for (i = 0; i < list_length; i++) {
     int element_length;
     const char *element;
-    
+
     element = Tcl_GetStringFromObj(elements[i], &element_length);
     rb_ary_push(result, element ? rb_tainted_str_new(element, element_length) : rb_str_new2(""));
     Tcl_DecrRefCount(elements[i]);
   }
-  
+
   Tcl_DecrRefCount(string);
 
   return result;
@@ -185,10 +185,10 @@ static VALUE rb_tcl_interp_array_to_list(VALUE self, VALUE array) {
   Data_Get_Struct(self, tcl_interp_struct, tcl_interp);
 
   int array_length = RARRAY_LEN(array), i;
-  
+
   Tcl_Obj *list = Tcl_NewObj();
   Tcl_IncrRefCount(list);
-  
+
   for (i = 0; i < array_length; i++) {
     VALUE element = rb_ary_entry(array, i);
     Tcl_Obj *string = Tcl_NewStringObj(RSTRING_PTR(rb_value_to_s(element)), -1);
@@ -199,9 +199,9 @@ static VALUE rb_tcl_interp_array_to_list(VALUE self, VALUE array) {
   }
 
   VALUE result = rb_tainted_str_new2(Tcl_GetStringFromObj(list, NULL));
-  
+
   Tcl_DecrRefCount(list);
-  
+
   return result;
 }
 
